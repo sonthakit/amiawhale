@@ -2,8 +2,8 @@ name: Save Webpage Snapshot
 
 on:
   schedule:
-    - cron: '0 */12 * * *'  # runs every 12 hours
-  workflow_dispatch:  # lets you trigger manually too
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
 
 jobs:
   save-page:
@@ -12,18 +12,66 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Create snapshot folder
-        run: mkdir -p snapshots
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Save HTML with timestamp
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Create folders
+        run: mkdir -p snapshots data
+
+      - name: Save raw HTML snapshot
         run: |
           TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
           curl -sL "https://amiawhale.com/hbar" -o "snapshots/hbar_$TIMESTAMP.html"
 
-      - name: Commit and push snapshot
+      - name: Extract HBAR data into TSV
+        run: |
+          python3 << 'EOF'
+          import requests
+          from bs4 import BeautifulSoup
+          from datetime import datetime, timezone
+          import os
+
+          url = "https://amiawhale.com/hbar"
+          resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+          soup = BeautifulSoup(resp.text, "html.parser")
+
+          table = soup.find("table")
+          rows = table.find_all("tr")
+          headers = [c.get_text(strip=True) for c in rows[0].find_all(["th", "td"])]
+          held_idx = headers.index("HBAR Held")
+          wallets_idx = headers.index("Wallets")
+
+          held, wallets = [], []
+          for row in rows[1:]:
+              cols = [c.get_text(strip=True) for c in row.find_all("td")]
+              if len(cols) <= max(held_idx, wallets_idx):
+                  continue
+              held.append(cols[held_idx].replace(" HBAR", ""))
+              wallets.append(cols[wallets_idx])
+
+          timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+          tiers = ["Kraken", "Blue Whale", "Whale", "Shark", "Dolphin", "Fish", "Jellyfish", "Shrimp"]
+
+          def append_row(filename, values):
+              is_new = not os.path.exists(filename)
+              with open(filename, "a") as f:
+                  if is_new:
+                      f.write("Timestamp\t" + "\t".join(tiers) + "\n")
+                  f.write(timestamp + "\t" + "\t".join(values) + "\n")
+
+          append_row("data/hbar_held_history.tsv", held)
+          append_row("data/wallets_history.tsv", wallets)
+          EOF
+
+      - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add snapshots/
-          git commit -m "Snapshot $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
+          git add snapshots/ data/
+          git commit -m "Snapshot + data update $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "No changes to commit"
           git push
