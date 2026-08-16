@@ -1,34 +1,4 @@
-name: Save Webpage Snapshot
-
-on:
-  schedule:
-    - cron: '0 */12 * * *'
-  workflow_dispatch:
-
-jobs:
-  save-page:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install requests beautifulsoup4
-
-      - name: Create folders
-        run: mkdir -p snapshots data
-
-      - name: Save raw HTML snapshot
-        run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          curl -sL "https://amiawhale.com/hbar" -o "snapshots/hbar_$TIMESTAMP.html"
-
-      - name: Extract HBAR data into TSV
+- name: Extract HBAR data into TSV
         run: |
           python3 << 'EOF'
           import requests
@@ -40,12 +10,36 @@ jobs:
           resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
           soup = BeautifulSoup(resp.text, "html.parser")
 
-          table = soup.find("table")
-          rows = table.find_all("tr")
-          headers = [c.get_text(strip=True) for c in rows[0].find_all(["th", "td"])]
-          held_idx = headers.index("HBAR Held")
-          wallets_idx = headers.index("Wallets")
+          tables = soup.find_all("table")
+          print(f"Found {len(tables)} table(s) on page")
 
+          target_table = None
+          held_idx = wallets_idx = None
+
+          for t_i, table in enumerate(tables):
+              rows = table.find_all("tr")
+              if not rows:
+                  continue
+              headers = [c.get_text(strip=True) for c in rows[0].find_all(["th", "td"])]
+              print(f"Table {t_i} headers: {headers}")
+
+              h_idx = w_idx = None
+              for i, h in enumerate(headers):
+                  hl = h.lower()
+                  if "held" in hl:
+                      h_idx = i
+                  if "wallet" in hl:
+                      w_idx = i
+
+              if h_idx is not None and w_idx is not None:
+                  target_table = table
+                  held_idx, wallets_idx = h_idx, w_idx
+                  break
+
+          if target_table is None:
+              raise SystemExit("Could not find a table with 'Held' and 'Wallet' columns. See printed headers above.")
+
+          rows = target_table.find_all("tr")
           held, wallets = [], []
           for row in rows[1:]:
               cols = [c.get_text(strip=True) for c in row.find_all("td")]
@@ -53,6 +47,9 @@ jobs:
                   continue
               held.append(cols[held_idx].replace(" HBAR", ""))
               wallets.append(cols[wallets_idx])
+
+          print(f"Extracted held: {held}")
+          print(f"Extracted wallets: {wallets}")
 
           timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
           tiers = ["Kraken", "Blue Whale", "Whale", "Shark", "Dolphin", "Fish", "Jellyfish", "Shrimp"]
@@ -67,11 +64,3 @@ jobs:
           append_row("data/hbar_held_history.tsv", held)
           append_row("data/wallets_history.tsv", wallets)
           EOF
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add snapshots/ data/
-          git commit -m "Snapshot + data update $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "No changes to commit"
-          git push
