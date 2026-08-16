@@ -1,4 +1,34 @@
-- name: Extract HBAR data into TSV
+name: Save Webpage Snapshot
+
+on:
+  schedule:
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+
+jobs:
+  save-page:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Create folders
+        run: mkdir -p snapshots data
+
+      - name: Save raw HTML snapshot
+        run: |
+          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
+          curl -sL "https://amiawhale.com/hbar" -o "snapshots/hbar_$TIMESTAMP.html"
+
+      - name: Extract HBAR data into TSV
         run: |
           python3 << 'EOF'
           import requests
@@ -64,3 +94,11 @@
           append_row("data/hbar_held_history.tsv", held)
           append_row("data/wallets_history.tsv", wallets)
           EOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add snapshots/ data/
+          git commit -m "Snapshot + data update $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "No changes to commit"
+          git push
