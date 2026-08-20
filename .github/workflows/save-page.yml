@@ -1,36 +1,7 @@
-name: Save Webpage Snapshot
-
-on:
-  schedule:
-    - cron: '0 */12 * * *'
-  workflow_dispatch:
-
-jobs:
-  save-page:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install requests beautifulsoup4
-
-      - name: Create folders
-        run: mkdir -p snapshots data
-
-      - name: Save raw HTML snapshot
-        run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          curl -sL "https://amiawhale.com/hbar" -o "snapshots/hbar_$TIMESTAMP.html"
-
       - name: Extract HBAR data into TSV
         run: |
           python3 << 'EOF'
+          import re
           import requests
           from bs4 import BeautifulSoup
           from datetime import datetime, timezone
@@ -39,7 +10,9 @@ jobs:
           url = "https://amiawhale.com/hbar"
           resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
           soup = BeautifulSoup(resp.text, "html.parser")
+          page_text = soup.get_text("\n")
 
+          # --- Find the Held/Wallets table ---
           tables = soup.find_all("table")
           print(f"Found {len(tables)} table(s) on page")
 
@@ -70,35 +43,29 @@ jobs:
               raise SystemExit("Could not find a table with 'Held' and 'Wallet' columns. See printed headers above.")
 
           rows = target_table.find_all("tr")
-          held, wallets = [], []
+          held = []
           for row in rows[1:]:
               cols = [c.get_text(strip=True) for c in row.find_all("td")]
               if len(cols) <= max(held_idx, wallets_idx):
                   continue
               held.append(cols[held_idx].replace(" HBAR", ""))
-              wallets.append(cols[wallets_idx])
 
           print(f"Extracted held: {held}")
-          print(f"Extracted wallets: {wallets}")
 
-          timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+          # --- Find HBAR price ---
+          price_match = re.search(r"HBAR Price\s*\$([0-9.]+)", page_text)
+          price = price_match.group(1) if price_match else "N/A"
+          print(f"Extracted price: {price}")
+
+          date_only = datetime.now(timezone.utc).strftime("%Y-%m-%d")
           tiers = ["Kraken", "Blue Whale", "Whale", "Shark", "Dolphin", "Fish", "Jellyfish", "Shrimp"]
 
           def append_row(filename, values):
               is_new = not os.path.exists(filename)
               with open(filename, "a") as f:
                   if is_new:
-                      f.write("Timestamp\t" + "\t".join(tiers) + "\n")
-                  f.write(timestamp + "\t" + "\t".join(values) + "\n")
+                      f.write("Date\tHBAR Price (USD)\t" + "\t".join(tiers) + "\n")
+                  f.write(date_only + "\t" + price + "\t" + "\t".join(values) + "\n")
 
           append_row("data/hbar_held_history.tsv", held)
-          append_row("data/wallets_history.tsv", wallets)
           EOF
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add snapshots/ data/
-          git commit -m "Snapshot + data update $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "No changes to commit"
-          git push
