@@ -28,10 +28,11 @@ jobs:
           TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
           curl -sL "https://amiawhale.com/hbar" -o "snapshots/hbar_$TIMESTAMP.html"
 
-      - name: Extract HBAR data into TSV
+      - name: Extract HBAR data into CSV
         run: |
           python3 << 'EOF'
           import re
+          import csv
           import requests
           from bs4 import BeautifulSoup
           from datetime import datetime, timezone
@@ -88,14 +89,14 @@ jobs:
           date_only = datetime.now(timezone.utc).strftime("%Y-%m-%d")
           tiers = ["Kraken", "Blue Whale", "Whale", "Shark", "Dolphin", "Fish", "Jellyfish", "Shrimp"]
 
-          def append_row(filename, values):
-              is_new = not os.path.exists(filename)
-              with open(filename, "a") as f:
-                  if is_new:
-                      f.write("Date\tHBAR Price (USD)\t" + "\t".join(tiers) + "\n")
-                  f.write(date_only + "\t" + price + "\t" + "\t".join(values) + "\n")
+          filename = "data/hbar_held_history.csv"
+          is_new = not os.path.exists(filename)
 
-          append_row("data/hbar_held_history.tsv", held)
+          with open(filename, "a", newline="") as f:
+              writer = csv.writer(f)
+              if is_new:
+                  writer.writerow(["Date", "HBAR Price (USD)"] + tiers)
+              writer.writerow([date_only, price] + held)
           EOF
 
       - name: Commit and push
