@@ -32,7 +32,6 @@ jobs:
         run: |
           python3 << 'EOF'
           import re
-          import csv
           import requests
           from bs4 import BeautifulSoup
           from datetime import datetime, timezone
@@ -78,7 +77,9 @@ jobs:
               cols = [c.get_text(strip=True) for c in row.find_all("td")]
               if len(cols) <= max(held_idx, wallets_idx):
                   continue
-              held.append(cols[held_idx].replace(" HBAR", ""))
+              # Strip " HBAR" suffix and remove thousand-separator commas
+              value = cols[held_idx].replace(" HBAR", "").replace(",", "")
+              held.append(value)
 
           print(f"Extracted held: {held}")
 
@@ -92,11 +93,10 @@ jobs:
           filename = "data/hbar_held_history.csv"
           is_new = not os.path.exists(filename)
 
-          with open(filename, "a", newline="") as f:
-              writer = csv.writer(f)
+          with open(filename, "a") as f:
               if is_new:
-                  writer.writerow(["Date", "HBAR Price (USD)"] + tiers)
-              writer.writerow([date_only, price] + held)
+                  f.write("Date,HBAR Price (USD)," + ",".join(tiers) + "\n")
+              f.write(date_only + "," + price + "," + ",".join(held) + "\n")
           EOF
 
       - name: Commit and push
