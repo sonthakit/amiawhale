@@ -5,6 +5,10 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 
+permissions:
+  actions: write
+  contents: write
+
 jobs:
   save-page:
     runs-on: ubuntu-latest
@@ -91,7 +95,6 @@ jobs:
           csv_filename = "data/hbar_held_history.csv"
           is_new = not os.path.exists(csv_filename)
 
-          # --- Check if held data matches the last saved row (ignore Date and Price) ---
           should_write = True
           if not is_new:
               with open(csv_filename, "r") as f:
@@ -104,21 +107,18 @@ jobs:
                       print("Data unchanged from previous entry — skipping save.")
 
           if should_write:
-              # Save CSV row
               with open(csv_filename, "a") as f:
                   if is_new:
                       f.write("Date,HBAR Price (USD)," + ",".join(tiers) + "\n")
                   f.write(date_only + "," + price + "," + ",".join(held) + "\n")
               print("New CSV row written.")
 
-              # Save HTML snapshot
               html_filename = f"snapshots/hbar_{timestamp_full}.html"
               with open(html_filename, "w") as f:
                   f.write(html_text)
               print(f"HTML snapshot saved: {html_filename}")
 
-              # --- Keep only the 30 most recent snapshots ---
-              snapshot_files = sorted(glob.glob("snapshots/*.html"))  # filenames sort chronologically
+              snapshot_files = sorted(glob.glob("snapshots/*.html"))
               if len(snapshot_files) > 30:
                   to_delete = snapshot_files[:len(snapshot_files) - 30]
                   for f_path in to_delete:
@@ -127,6 +127,24 @@ jobs:
           else:
               print("No new row or snapshot saved (duplicate data).")
           EOF
+
+      - name: Delete old workflow runs (keep latest 30)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_IDS=$(gh run list --workflow="save-page.yml" --limit 200 --json databaseId --jq '.[].databaseId')
+          COUNT=$(echo "$RUN_IDS" | wc -l)
+          echo "Total runs found: $COUNT"
+
+          if [ "$COUNT" -gt 30 ]; then
+            IDS_TO_DELETE=$(echo "$RUN_IDS" | tail -n +31)
+            for id in $IDS_TO_DELETE; do
+              echo "Deleting run: $id"
+              gh run delete "$id" --repo "$GITHUB_REPOSITORY" || echo "Failed to delete $id"
+            done
+          else
+            echo "30 or fewer runs — nothing to delete."
+          fi
 
       - name: Commit and push
         run: |
