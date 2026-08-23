@@ -31,6 +31,7 @@ jobs:
           from bs4 import BeautifulSoup
           from datetime import datetime, timezone
           import os
+          import glob
 
           url = "https://amiawhale.com/hbar"
           resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -115,6 +116,14 @@ jobs:
               with open(html_filename, "w") as f:
                   f.write(html_text)
               print(f"HTML snapshot saved: {html_filename}")
+
+              # --- Keep only the 30 most recent snapshots ---
+              snapshot_files = sorted(glob.glob("snapshots/*.html"))  # filenames sort chronologically
+              if len(snapshot_files) > 30:
+                  to_delete = snapshot_files[:len(snapshot_files) - 30]
+                  for f_path in to_delete:
+                      os.remove(f_path)
+                      print(f"Deleted old snapshot: {f_path}")
           else:
               print("No new row or snapshot saved (duplicate data).")
           EOF
